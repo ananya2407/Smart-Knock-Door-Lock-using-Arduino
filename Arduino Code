@@ -38,10 +38,13 @@ void loop() {
 // Listen for any knock at all.
 knockSensorValue = analogRead(knockSensor);
 
-if (digitalRead(programSwitch)==HIGH){  // if program button pressed
+if (digitalRead(programSwitch)==HIGH)
+{                                     // if program button pressed
 programButtonPressed = true;          // Yes, so save that state
 digitalWrite(redLED, HIGH);           // and turn on the red light to indicate  programming.
-} else {
+} 
+
+else {
 programButtonPressed = false;
 digitalWrite(redLED, LOW);
 }
