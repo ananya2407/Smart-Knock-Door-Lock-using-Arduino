@@ -1,0 +1,232 @@
+// Pin definitions
+const int knockSensor = 0;         // Piezo sensor on pin 0.
+const int programSwitch = 2;       // If this is high we program a new code.
+const int lockMotor = 3;           // Gear motor used to turn the lock.
+const int redLED = 4;              // Status LED
+const int greenLED = 5;            // Status LED
+
+// Tuning constants.  
+const int threshold = 27;           // Minimum signal from the piezo to register as a knock
+const int rejectValue = 25;        // Don’t unlock if individual knock is off by this percentage.
+const int averageRejectValue = 15; // If the average timing of the knocks is off by this percent don't unlock.
+const int knockFadeTime = 150;     // milliseconds allowed a knock to fade before listening for another one.
+const int lockTurnTime = 650;      // milliseconds to run the motor to get it to go a half turn.
+
+const int maximumKnocks = 20;       // Maximum number of knocks to listen for.
+const int knockComplete = 1200;     // Longest time to wait for a knock before assuming that it's finished.
+
+
+// Variables.
+int secretCode[maximumKnocks] = {50, 25, 25, 50, 100, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};  // Initial setup: "Shave and a Hair Cut, two bits."
+int knockReadings[maximumKnocks];   // When someone knocks this array fills with delays between knocks.
+int knockSensorValue = 0;           // Last reading of the knock sensor.
+int programButtonPressed = false;   // Flag to remember the programming button setting at the end of the cycle.
+
+void setup() {
+pinMode(lockMotor, OUTPUT);
+pinMode(redLED, OUTPUT);
+pinMode(greenLED, OUTPUT);
+pinMode(programSwitch, INPUT);
+
+Serial.begin(9600);               			// Uncomment the Serial.bla lines for debugging.
+Serial.println("Program start.");  			// to check program start
+
+digitalWrite(greenLED, HIGH);      // Green LED on, on start up
+}
+
+void loop() {
+// Listen for any knock at all.
+knockSensorValue = analogRead(knockSensor);
+
+if (digitalRead(programSwitch)==HIGH){  // if program button pressed
+programButtonPressed = true;          // Yes, so save that state
+digitalWrite(redLED, HIGH);           // and turn on the red light to indicate  programming.
+} else {
+programButtonPressed = false;
+digitalWrite(redLED, LOW);
+}
+
+if (knockSensorValue >=threshold){
+listenToSecretKnock();
+}
+}
+
+// Records the timing of knocks.
+void listenToSecretKnock(){
+Serial.println("knock starting");
+
+int i = 0;
+// First reset the listening array.
+for (i=0;i<maximumKnocks;i++){
+knockReadings[i]=0;
+}
+
+int currentKnockNumber=0;         			// Incrementer for the array.
+int startTime=millis();           			// Reference for when knock started.
+int now=millis();
+
+digitalWrite(greenLED, LOW);      			// blink the LED for a bit as a visual indicator of the knock.
+if (programButtonPressed==true){
+digitalWrite(redLED, LOW);                         // and red LED too if programming a new knock.
+}
+delay(knockFadeTime);                       	        // waiting for peak to fade before listening to the next one.
+digitalWrite(greenLED, HIGH);
+if (programButtonPressed==true){
+digitalWrite(redLED, HIGH);
+}
+do {
+//listen for the next knock or wait for it to timeout.
+knockSensorValue = analogRead(knockSensor);
+if (knockSensorValue >=threshold){                   //another knock...
+//record the delay time.
+Serial.println("knock.");
+now=millis();
+knockReadings[currentKnockNumber] = now-startTime;
+currentKnockNumber ++;                             //increment the counter
+startTime=now;
+// and reset timer for the next knock
+digitalWrite(greenLED, LOW);
+if (programButtonPressed==true){
+digitalWrite(redLED, LOW);                       // and the red one too if we're programming a new knock.
+}
+delay(knockFadeTime);                              // a little delay to let the knock decay.
+digitalWrite(greenLED, HIGH);
+if (programButtonPressed==true){
+digitalWrite(redLED, HIGH);
+}
+}
+
+now=millis();
+
+//timeout or run out of knocks?
+} while ((now-startTime < knockComplete) && (currentKnockNumber < maximumKnocks));
+
+//knock recorded, check if it's valid
+if (programButtonPressed==false){             // not in progrmaing mode.
+if (validateKnock() == true){
+triggerDoorUnlock();
+} else {
+Serial.println("Secret knock failed.");
+digitalWrite(greenLED, LOW);  		// didn't unlock, blink the red LED
+for (i=0;i<4;i++){
+digitalWrite(redLED, HIGH);
+delay(100);
+digitalWrite(redLED, LOW);
+delay(100);
+}
+digitalWrite(greenLED, HIGH);
+}
+} else { // in programming mode still validate the lock
+validateKnock();
+// blink the green and red alternately to show program is complete.
+Serial.println("New lock stored.");
+digitalWrite(redLED, LOW);
+digitalWrite(greenLED, HIGH);
+for (i=0;i<3;i++){
+delay(100);
+digitalWrite(redLED, HIGH);
+digitalWrite(greenLED, LOW);
+delay(100);
+digitalWrite(redLED, LOW);
+digitalWrite(greenLED, HIGH);
+}
+}
+}
+
+
+// Runs the motor to unlock the door.
+void triggerDoorUnlock(){
+Serial.println("Door unlocked!");
+int i=0;
+
+// turn the motor on for a bit.
+digitalWrite(lockMotor, HIGH);
+digitalWrite(greenLED, HIGH);            // And the green LED too.
+
+delay (lockTurnTime);                    // Wait a bit.
+
+digitalWrite(lockMotor, LOW);            // Turn the motor off.
+
+// Blink the green LED a few times
+for (i=0; i < 5; i++){
+digitalWrite(greenLED, LOW);
+delay(100);
+digitalWrite(greenLED, HIGH);
+delay(100);
+}
+
+}
+
+// if our knock matches the secret.
+// returns true if it's a good knock, false if it's not.
+boolean validateKnock(){
+int i=0;
+
+// check if right number of knocks?
+int currentKnockCount = 0;
+int secretKnockCount = 0;
+int maxKnockInterval = 0;          	// used later to normalize the times.
+
+for (i=0;i<maximumKnocks;i++){
+if (knockReadings[i] > 0){
+currentKnockCount++;
+}
+if (secretCode[i] > 0){  					
+secretKnockCount++;
+}
+
+if (knockReadings[i] > maxKnockInterval){ 	// collect normalization data while looping.
+maxKnockInterval = knockReadings[i];
+}
+}
+
+// If recording a new knock, save the info and get out.
+
+if (programButtonPressed==true){
+for (i=0;i<maximumKnocks;i++){ // normalize the times
+secretCode[i]= map(knockReadings[i],0, maxKnockInterval, 0, 100);
+}
+// And flash the lights in the recorded pattern to know it's been programmed.
+digitalWrite(greenLED, LOW);
+digitalWrite(redLED, LOW);
+delay(1000);
+digitalWrite(greenLED, HIGH);
+digitalWrite(redLED, HIGH);
+delay(50);
+for (i = 0; i < maximumKnocks ; i++){
+digitalWrite(greenLED, LOW);
+digitalWrite(redLED, LOW);
+// only turn it on if there's a delay
+if (secretCode[i] > 0){
+delay( map(secretCode[i],0, 100, 0, maxKnockInterval)); // Expand the time back out to what it was.  Roughly.
+digitalWrite(greenLED, HIGH);
+digitalWrite(redLED, HIGH);
+}
+delay(50);
+}
+return false; 	//don't unlock the door when we are recording a new knock.
+}
+
+if (currentKnockCount != secretKnockCount){
+return false;
+}
+
+/*  Now compare the relative intervals of knocks, not the absolute time between them.*/
+int totaltimeDifferences=0;
+int timeDiff=0;
+for (i=0;i<maximumKnocks;i++){ // Normalize the times
+knockReadings[i]= map(knockReadings[i],0, maxKnockInterval, 0, 100);
+timeDiff = abs(knockReadings[i]-secretCode[i]);
+if (timeDiff > rejectValue){ // Individual value too far out of whack
+return false;
+}
+totaltimeDifferences += timeDiff;
+}
+// It can also fail if the whole thing is too inaccurate.
+if (totaltimeDifferences/secretKnockCount>averageRejectValue){
+return false;
+}
+
+return true;
+
+}
